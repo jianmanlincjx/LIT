@@ -71,6 +71,8 @@ h1 .sub { display:block; font-size:inherit; font-weight:inherit; color:var(--ink
 .rr-vid video { display:block; width:100%; height:auto; border-radius:10px; background:#000; }
 .rr-tag { position:absolute; top:10px; font-size:12.5px; font-weight:600; color:#fff; padding:4px 9px; border-radius:6px; pointer-events:none; }
 .rr-tag.base { left:10px; background:rgba(160,40,40,.85); } .rr-tag.lit { left:calc(50% + 10px); background:rgba(30,110,60,.85); }
+.rr-end { position:absolute; top:40px; font-size:11.5px; font-weight:500; color:#fff; background:rgba(20,22,26,.72); padding:3px 8px; border-radius:5px; pointer-events:none; letter-spacing:.01em; }
+.rr-end.base { left:10px; } .rr-end.lit { left:calc(50% + 10px); }
 .note { color:var(--muted); font-size:14px; margin:8px 0 0; }
 .logos { display:flex; justify-content:center; align-items:flex-start; gap:44px; margin:14px 0 18px; flex-wrap:wrap; }
 .logos span { display:inline-flex; align-items:flex-start; gap:6px; }
@@ -311,6 +313,17 @@ footer a { color:var(--muted); }
       ];
       const CDN = "https://cdn.jsdelivr.net/gh/jianmanlincjx/LIT@f23efa7/";  // pin = commit that last touched docs/static/video/real
       const COND = { id: "In-distribution", lighting: "Lighting OOD", camera: "Camera OOD", distractors: "Distractors OOD" };
+      // 两段原始视频不等长,rr_composite.sh 用 tpad=stop_mode=clone 让短的一侧定格末帧
+      // 等另一侧跑完。不标注的话观众会以为是卡顿 —— 尤其 dustpan_camera 是 LIT 先完成、
+      // 反而显得我们卡住。t = 较短那侧的时长(秒);只标注定格 >= 2s 的片段。
+      const FREEZE = {
+        blocks_id:{s:"base",t:39.30},   blocks_lighting:{s:"base",t:30.00},
+        blocks_camera:{s:"base",t:37.07}, blocks_distractors:{s:"base",t:15.13},
+        dustpan_lighting:{s:"base",t:11.40}, dustpan_camera:{s:"lit",t:14.50},
+        dustpan_distractors:{s:"base",t:11.40}, transfer_id:{s:"base",t:25.87},
+        transfer_lighting:{s:"base",t:30.00}, transfer_distractors:{s:"base",t:14.50}
+      };
+      const ENDTXT = { base:"episode ended", lit:"task complete" };
       const rows = document.getElementById("rr-rows"), tabs = document.querySelectorAll(".rr-tabs button");
       function show(c) {
         tabs.forEach(b => b.classList.toggle("on", b.dataset.c === c));
@@ -319,10 +332,18 @@ footer a { color:var(--muted); }
           const cdn = CDN + "docs/" + f;   // same file via jsDelivr (fast in CN); local copy as fallback
           return '<div class="rr-row">' +
             '<div class="rr-title"><b>' + t.name + '</b> <span>&ldquo;' + t.instr + '&rdquo;</span> <em>' + COND[c] + '</em></div>' +
-            '<div class="rr-vid"><video autoplay muted loop playsinline controls preload="metadata" poster="' + f + '.jpg">' +
+            '<div class="rr-vid" data-k="' + t.k + '_' + c + '"><video autoplay muted loop playsinline controls preload="metadata" poster="' + f + '.jpg">' +
             '<source src="' + cdn + '.mp4" type="video/mp4"><source src="' + f + '.mp4" type="video/mp4"></video>' +
-            '<span class="rr-tag base">MolmoAct2 baseline &nbsp;&#10007;</span><span class="rr-tag lit">LIT (ours) &nbsp;&#10003;</span></div></div>';
+            '<span class="rr-tag base">MolmoAct2 baseline &nbsp;&#10007;</span><span class="rr-tag lit">LIT (ours) &nbsp;&#10003;</span>' +
+            '<span class="rr-end" hidden></span></div></div>';
         }).join("");
+        TASKS.forEach(t => {
+          const fz = FREEZE[t.k + "_" + c]; if (!fz) return;
+          const box = rows.querySelector('[data-k="' + t.k + "_" + c + '"]'); if (!box) return;
+          const badge = box.querySelector(".rr-end"), vid = box.querySelector("video");
+          badge.className = "rr-end " + fz.s; badge.textContent = ENDTXT[fz.s];
+          vid.addEventListener("timeupdate", () => { badge.hidden = vid.currentTime < fz.t; });
+        });
       }
       tabs.forEach(b => b.addEventListener("click", () => show(b.dataset.c)));
       show("lighting");   // 默认落在 OOD:项目页的默认视图应该先给出贡献所在
