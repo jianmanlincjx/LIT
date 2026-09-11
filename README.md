@@ -45,7 +45,7 @@ Per-axis numbers are on the <a href="https://jianmanlincjx.github.io/LIT/#plus">
 
 1. **[How to integrate LIT into a VLA or WAM](#integrating-lit-into-a-vla-or-wam)** — or into your own framework. Follow the six-step procedure and you can implement it.
 2. **[A worked example](#worked-example-molmoact2-train-then-evaluate)** — training and evaluating LIT integrated into MolmoAct2.
-3. **[Checkpoints](#checkpoints) and [code repositories](#code)** for all four frameworks.
+3. **[Checkpoints and data](#checkpoints-and-data)** and the **[code repositories](#code)** for all four frameworks.
 
 ---
 
@@ -185,7 +185,7 @@ OPTIMIZER_ACTION_EXPERT_LR=1e-4 SCHEDULER_ACTION_EXPERT_WARMUP_STEPS=5000 \
 Stage 2 reports the Stage-1 SE(3) encoder as unexpected keys
 when it loads — expected; the encoder is training-time only.
 
-**Evaluate** `outputs/…/checkpoints/030000/pretrained_model` (or a released checkpoint from [Checkpoints](#checkpoints)):
+**Evaluate** `outputs/…/checkpoints/030000/pretrained_model` (or a released checkpoint from [Checkpoints and data](#checkpoints-and-data)):
 
 ```bash
 cd LIT
@@ -204,31 +204,23 @@ Both are resumable across GPUs and print the per-axis / per-suite result when th
   Background 1,076 · Robot 1,550 · Layout 1,525 · Language 1,537 tasks). The task-weighted rate is about two
   points lower; `aggregate.py` prints both and labels the reported one.
 
-## Checkpoints
+## Checkpoints and data
 
-Stage-2 models (the ones in the tables) and the Stage-1 action priors they start from are on Hugging Face:
-**[linjianman/LIT](https://huggingface.co/linjianman/LIT)** (public, no login needed; 43 GB for the four Stage-2 models, 84 GB with Stage 1).
+Everything is on Hugging Face, public, no login needed:
 
-```bash
-hf download linjianman/LIT --include "*/lit_stage2/*" --local-dir LIT_ckpt        # the four reported models
-hf download linjianman/LIT --include "molmoact2/*" --local-dir LIT_ckpt           # one framework, both stages
-```
+| | Repository | Contents | Download |
+| --- | --- | --- | --- |
+| **Simulation checkpoints** | [linjianman/LIT](https://huggingface.co/linjianman/LIT) | the four Stage-2 LIT models reported in the tables (π0.5, MolmoAct2, FAST-WAM, ImageWAM) and the Stage-1 action priors they start from — 43 GB, 84 GB with Stage 1 | `hf download linjianman/LIT --include "*/lit_stage2/*" --local-dir LIT_ckpt` (all four) · `--include "molmoact2/*"` (one framework, both stages) |
+| **Real-robot checkpoints** | [shailes-h/Molmoact2-LIT](https://huggingface.co/shailes-h/Molmoact2-LIT) | the MolmoAct2 models used in the real-robot experiments — LIT and the matched baseline, trained on the demonstrations below and evaluated on the three real tasks | `hf download shailes-h/Molmoact2-LIT` |
+| **Real-robot data** | [shailes-h/yam_bimanual_manipulation](https://huggingface.co/datasets/shailes-h/yam_bimanual_manipulation) | YAM dual-arm platform, three tasks (blocks → box, dust-pan wipe, egg transfer), 292 successful episodes, three cameras, LeRobot v3.0, 4.8 GB | `hf download shailes-h/yam_bimanual_manipulation --repo-type dataset` |
+
+Simulation checkpoint layout and how to point the evaluators at them:
 
 | Directory | Format | How to use it |
 | --- | --- | --- |
 | `molmoact2/lit_stage2`, `pi05/lit_stage2` | LeRobot policy directory (`config.json` + `model.safetensors` + normalisers) | `--policy.path <dir>` |
 | `fastwam/lit_stage2`, `imagewam/lit_stage2` | `model.pt` + `config.yaml` + `dataset_stats.json` | `ckpt=<dir>/model.pt` `dataset_stats_path=<dir>/dataset_stats.json` |
 | `*/lit_stage1` | same layout as the Stage 2 of that framework | start Stage 2 from it and skip Stage 1 — each fork's README ② gives the variable (`POLICY_PATH`, `STAGE1`, `resume=`, `STAGE1_CHECKPOINT`) |
-
-**Real-robot checkpoints.** The MolmoAct2 models used in the real-robot experiments — LIT and the matched
-baseline, trained on the YAM bimanual demonstrations below and evaluated on the three real tasks — are public:
-[shailes-h/Molmoact2-LIT](https://huggingface.co/shailes-h/Molmoact2-LIT)
-(`hf download shailes-h/Molmoact2-LIT`). The `linjianman/LIT` checkpoints above are the simulation (LIBERO) models.
-
-**Real-robot data.** The demonstrations behind the real-robot results are public:
-[shailes-h/yam_bimanual_manipulation](https://huggingface.co/datasets/shailes-h/yam_bimanual_manipulation)
-— YAM dual-arm platform, three tasks (blocks → box, dust-pan wipe, egg transfer), 292 successful episodes,
-three cameras, LeRobot v3.0, 4.8 GB (`hf download shailes-h/yam_bimanual_manipulation --repo-type dataset`).
 
 ## Code
 
