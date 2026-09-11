@@ -49,8 +49,22 @@ Per-axis numbers are on the <a href="https://jianmanlincjx.github.io/LIT/#plus">
 
 LIT is a **plug-in interface**, not a new model. It leaves the backbone, the action expert, the action
 representation, the chunk length and the generation objective of the host exactly as they are, and changes only
-*how vision reaches the action expert*. The recipe below is what we applied, unchanged, to two VLAs (π0.5,
-MolmoAct2) and two WAMs (FAST-WAM, ImageWAM); each step names the reference implementation in the forks.
+*how vision reaches the action expert*: the direct path from image tokens into the action expert is closed, a
+small set of learnable latent tokens becomes the expert's only visual input, and eight of those latents are
+supervised to reconstruct the terminal end-effector pose of the current action chunk. Training happens in two
+stages — an image-free action prior first, the visual interface second. The same recipe, with the same interface
+settings, was applied unchanged to two VLAs (π0.5, MolmoAct2) and two WAMs (FAST-WAM, ImageWAM).
+
+Integration is six steps; each one below names the reference implementation in the forks:
+
+| Step | What you do | Result |
+| :-: | --- | --- |
+| **1** | Find the **coupling point** where visual features enter the action expert, and close it | vision has no direct path into the action expert (the *firewall*) |
+| **2** | Add `N = 100` learnable **latent tokens** that read the backbone and are handed to the action expert at that coupling point | the latents are the expert's only visual input |
+| **3** | Decode 8 of the latents to the chunk's **terminal SE(3) pose** and add an MSE term (`λ = 0.3`) | the interface is forced to carry task-relevant spatial information |
+| **4** | Add a small **SE(3) encoder** used only while training without images | the action expert can be pretrained on language + state + goal pose |
+| **5** | Train in **two stages**: image-free action prior (10K) → visual interface (30K) | the reported model |
+| **6** | Run **three checks** — interface used, pose carried, new parameters trained | catches the silent failures we hit |
 
 ### What the host must have
 
@@ -66,12 +80,14 @@ Locate where visual features enter the action expert and shut that path, so that
 Language and robot state may keep their original path (MolmoAct2) or be routed through the interface too
 (π0.5) — the invariant is *no image tokens into the action expert*.
 
-| Host | Coupling point | What "closing it" means | Reference |
-| --- | --- | --- | --- |
-| MolmoAct2 (VLA) | layer-wise cross-attention from the action expert to the VLM token sequence | mask image tokens out of every action-expert attention | `mask_image_from_action_expert` in `lerobot/src/lerobot/policies/molmoact2/modeling_molmoact2.py` |
-| π0.5 (VLA) | one joint self-attention shared by the VLM and the action expert | attention mask: action-expert rows cannot attend image (or language/state) columns | mask in `src/pi05_goal_prior/modeling_pi05_goal_prior.py` |
-| FAST-WAM (WAM) | video-DiT block features injected into the ActionDiT | drop the direct feature injection; only the interface remains | `goal_prior_stage: stage2` in `configs/model/fastwam_goal_prior_stage2.yaml`, wired in `fastwam_joint.py` / `mot.py` |
-| ImageWAM (WAM) | FLUX.2 DiT block features → action head | same: the direct path is closed | `backbones/imagewam.py`, `configs/model/imagewam_flux2_klein_4b_goal_prior_stage2.yaml` |
+<table>
+<thead><tr><th width="11%">Host</th><th width="34%">Coupling point</th><th width="27%">What "closing it" means</th><th width="28%">Reference</th></tr></thead>
+<tbody>
+<tr><td>MolmoAct2 (VLA)</td><td>Layer-wise cross-attention from the action expert to the VLM token sequence (images, instruction, state)</td><td>Mask the image tokens out of every action-expert attention</td><td><code>mask_image_from_action_expert</code> in <code>lerobot/src/lerobot/policies/molmoact2/modeling_molmoact2.py</code></td></tr>
+<tr><td>π0.5 (VLA)</td><td>One joint self-attention shared by the VLM and the action expert; the expert's rows attend the VLM's image, language and state columns</td><td>Attention mask: action-expert rows cannot attend image (and, in Stage 1, language/state) columns</td><td>mask in <code>src/pi05_goal_prior/modeling_pi05_goal_prior.py</code></td></tr>
+<tr><td>FAST-WAM (WAM)</td><td>Per-block features of the Wan2.2 video DiT injected into the ActionDiT</td><td>Drop the direct feature injection; only the interface remains</td><td><code>goal_prior_stage: stage2</code> in <code>configs/model/fastwam_goal_prior_stage2.yaml</code>, wired in <code>fastwam_joint.py</code> / <code>mot.py</code></td></tr>
+<tr><td>ImageWAM (WAM)</td><td>Per-block features of the FLUX.2 Klein DiT fed to the action head</td><td>Same: the direct path is closed</td><td><code>backbones/imagewam.py</code>, <code>configs/model/imagewam_flux2_klein_4b_goal_prior_stage2.yaml</code></td></tr>
+</tbody></table>
 
 ### Step 2 — Add the latent interface
 
