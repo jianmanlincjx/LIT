@@ -41,7 +41,7 @@ Per-axis numbers are on the <a href="https://jianmanlincjx.github.io/LIT/#plus">
 
 </div>
 
-**Contents** &nbsp; [Integrating LIT into a VLA or WAM](#integrating-lit-into-a-vla-or-wam) · [Worked example: MolmoAct2](#worked-example-molmoact2-train-then-evaluate) · [Two things that change the numbers](#two-things-that-change-the-numbers) · [Checkpoints](#checkpoints) · [Code](#code) · [Citation](#citation)
+**This README is organised in three parts.** First, how to integrate LIT into a VLA or WAM — or into your own framework: follow the procedure below and you can implement it. Second, a worked example of training and evaluating LIT integrated into MolmoAct2. Third, the checkpoints and the code repositories for all four frameworks.
 
 ---
 
@@ -151,6 +151,8 @@ Each caught a silent failure for us at least once:
   the gripper, not trail it.
 - **Do the new parameters train and save?** Under bf16 autocast, small gates and freshly added modules can freeze
   or be dropped from the checkpoint; check the parameter count in `train_config.json` and that the new keys load.
+
+---
 
 ## Worked example: MolmoAct2, train then evaluate
 
