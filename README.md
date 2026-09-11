@@ -220,9 +220,10 @@ hf download linjianman/LIT --include "molmoact2/*" --local-dir LIT_ckpt         
 | `fastwam/lit_stage2`, `imagewam/lit_stage2` | `model.pt` + `config.yaml` + `dataset_stats.json` | `ckpt=<dir>/model.pt` `dataset_stats_path=<dir>/dataset_stats.json` |
 | `*/lit_stage1` | same layout as the Stage 2 of that framework | start Stage 2 from it and skip Stage 1 — each fork's README ② gives the variable (`POLICY_PATH`, `STAGE1`, `resume=`, `STAGE1_CHECKPOINT`) |
 
-The MolmoAct2 checkpoints used for evals, plus the MolmoAct2 baseline checkpoint, are public:
+**Real-robot checkpoints.** The MolmoAct2 models used in the real-robot experiments — LIT and the matched
+baseline, trained on the YAM bimanual demonstrations below and evaluated on the three real tasks — are public:
 [shailes-h/Molmoact2-LIT](https://huggingface.co/shailes-h/Molmoact2-LIT)
-(`hf download shailes-h/Molmoact2-LIT`).
+(`hf download shailes-h/Molmoact2-LIT`). The `linjianman/LIT` checkpoints above are the simulation (LIBERO) models.
 
 **Real-robot data.** The demonstrations behind the real-robot results are public:
 [shailes-h/yam_bimanual_manipulation](https://huggingface.co/datasets/shailes-h/yam_bimanual_manipulation)
