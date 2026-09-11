@@ -41,7 +41,11 @@ Per-axis numbers are on the <a href="https://jianmanlincjx.github.io/LIT/#plus">
 
 </div>
 
-**This README is organised in three parts.** First, how to integrate LIT into a VLA or WAM — or into your own framework: follow the procedure below and you can implement it. Second, a worked example of training and evaluating LIT integrated into MolmoAct2. Third, the checkpoints and the code repositories for all four frameworks.
+**This README is organised in three parts:**
+
+1. **[How to integrate LIT into a VLA or WAM](#integrating-lit-into-a-vla-or-wam)** — or into your own framework. Follow the six-step procedure and you can implement it.
+2. **[A worked example](#worked-example-molmoact2-train-then-evaluate)** — training and evaluating LIT integrated into MolmoAct2.
+3. **[Checkpoints](#checkpoints) and [code repositories](#code)** for all four frameworks.
 
 ---
 
