@@ -64,7 +64,7 @@ Integration is six steps. Each step below names where it lives in the four forks
 | **2** | Add the **latent interface**: `K = 100` learnable latent tokens that aggregate the backbone's visual and semantic representations and condition the action expert layer-wise | the latent tokens are the action expert's only visual conditioning pathway |
 | **3** | Add the **pose-reconstruction objective**: an MLP decoder reconstructs each chunk's terminal SE(3) goal state from the latent tokens (`λ_pose = 0.3`) | the interface is encouraged to retain goal-relevant spatial information |
 | **4** | Add the **SE(3) goal encoder** used in Stage 1 only | the action expert can be pretrained on language, state and the terminal pose, without images |
-| **5** | Train in **two stages**: spatial-goal-conditioned action pretraining (10K steps) → vision–action interface learning (30K steps) | the reported model |
+| **5** | Train in **two stages**: spatial-goal-conditioned action pretraining → vision–action interface learning | the reported model |
 | **6** | Run **three checks** — the interface is used, the pose is reconstructed, the new parameters train and save | catches the silent failures we hit |
 
 ### What the host must provide
@@ -124,16 +124,16 @@ Reference: `SE3Encoder` / `GoalPoseEncoder` in every fork.
 ### Step 5 — Train in two stages
 
 ```text
-Stage 1  Spatial-goal-conditioned action pretraining                                            (10K steps)
+Stage 1  Spatial-goal-conditioned action pretraining
          backbone frozen · no images · action expert trained from scratch
          conditioned on language + robot state + SE(3)-encoded terminal pose  →  native action loss (L_prior)
-Stage 2  Vision–action interface learning                                                       (30K steps)
+Stage 2  Vision–action interface learning
          action expert initialised from Stage 1 · goal encoder omitted · latent interface + pose decoder added
          full fine-tuning of backbone, action expert, latent tokens, interface attention and decoder:
          L_stage2 = L_act + 0.3 · L_pose
 ```
 
-Learning rates that mattered: the interface modules and the action expert at `1e-4` with a `5K`-step warm-up; the
+Learning rates that mattered: the interface modules and the action expert at `1e-4` with a longer warm-up; the
 backbone at `1e-5`. Interface settings were **not** tuned per architecture: `K = 100`, `d = 768`,
 `inner_dim = 512`, `λ_pose = 0.3`. At inference the latent interface stays active while the Stage-1 goal encoder
 and the Stage-2 decoder are omitted; the policy needs only images, language and robot state and follows the
@@ -170,13 +170,13 @@ bash scripts/preflight.sh                                # submodule commit, LIB
 
 ```bash
 cd "$LIT_MOLMOACT2"
-bash scripts/libero_goal_prior_v3/train_stage1.sh           # Stage 1: no images, 10K steps, batch 128/GPU
-bash scripts/libero_goal_prior_v3/train_stage2.sh           # Stage 2: latent interface + pose reconstruction, 30K steps, from Stage 1
+bash scripts/libero_goal_prior_v3/train_stage1.sh           # Stage 1: action prior without images
+bash scripts/libero_goal_prior_v3/train_stage2.sh           # Stage 2: latent interface + pose reconstruction, from Stage 1
 OPTIMIZER_ACTION_EXPERT_LR=1e-4 SCHEDULER_ACTION_EXPERT_WARMUP_STEPS=5000 \
-  bash scripts/libero_goal_prior/train_baseline.sh          # (optional) matched baseline, 30K steps, batch 32/GPU
+  bash scripts/libero_goal_prior/train_baseline.sh          # (optional) matched baseline
 ```
 
-Batch sizes are per GPU (the paper used 7 GPUs). Stage 2 reports the Stage-1 SE(3) encoder as unexpected keys
+Stage 2 reports the Stage-1 SE(3) encoder as unexpected keys
 when it loads — expected; the encoder is training-time only.
 
 **Evaluate** `outputs/…/checkpoints/030000/pretrained_model` (or a released checkpoint from [Checkpoints](#checkpoints)):
