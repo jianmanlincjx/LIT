@@ -47,102 +47,109 @@ Per-axis numbers are on the <a href="https://jianmanlincjx.github.io/LIT/#plus">
 
 ## Integrating LIT into a VLA or WAM
 
-LIT is a **plug-in interface**, not a new model. It leaves the backbone, the action expert, the action
-representation, the chunk length and the generation objective of the host exactly as they are, and changes only
-*how vision reaches the action expert*: the direct path from image tokens into the action expert is closed, a
-small set of learnable latent tokens becomes the expert's only visual input, and eight of those latents are
-supervised to reconstruct the terminal end-effector pose of the current action chunk. Training happens in two
-stages — an image-free action prior first, the visual interface second. The same recipe, with the same interface
-settings, was applied unchanged to two VLAs (π0.5, MolmoAct2) and two WAMs (FAST-WAM, ImageWAM).
+LIT is a framework-agnostic two-stage strategy, not a new model. It applies to any robot foundation model that
+combines a pretrained backbone (a VLM or a video model) with an embodiment-specific action expert, and it retains
+the backbone and action-expert architectures, the action representation, the prediction horizon and the native
+action-generation objective. What changes is *how vision conditions the action expert*: in standard
+architectures, backbone visual representations directly condition the action expert; LIT instead routes visual
+conditioning **exclusively through a pose-supervised latent interface** to an action expert that was first
+pretrained without images. The same recipe, with the same interface settings, was applied unchanged to two VLAs
+(π0.5, MolmoAct2) and two WAMs (FAST-WAM, ImageWAM).
 
-Integration is six steps; each one below names the reference implementation in the forks:
+Integration is six steps. Each step below names where it lives in the four forks.
 
-| Step | What you do | Result |
+| Step | What you do | What it gives you |
 | :-: | --- | --- |
-| **1** | Find the **coupling point** where visual features enter the action expert, and close it | vision has no direct path into the action expert (the *firewall*) |
-| **2** | Add `N = 100` learnable **latent tokens** that read the backbone and are handed to the action expert at that coupling point | the latents are the expert's only visual input |
-| **3** | Decode 8 of the latents to the chunk's **terminal SE(3) pose** and add an MSE term (`λ = 0.3`) | the interface is forced to carry task-relevant spatial information |
-| **4** | Add a small **SE(3) encoder** used only while training without images | the action expert can be pretrained on language + state + goal pose |
-| **5** | Train in **two stages**: image-free action prior (10K) → visual interface (30K) | the reported model |
-| **6** | Run **three checks** — interface used, pose carried, new parameters trained | catches the silent failures we hit |
+| **1** | Identify the **coupling layers** — where backbone representations condition the action expert through the architecture's native mechanism — and remove the direct visual conditioning | vision no longer reaches the action expert directly |
+| **2** | Add the **latent interface**: `K = 100` learnable latent tokens that aggregate the backbone's visual and semantic representations and condition the action expert layer-wise | the latent tokens are the action expert's only visual conditioning pathway |
+| **3** | Add the **pose-reconstruction objective**: an MLP decoder reconstructs each chunk's terminal SE(3) goal state from the latent tokens (`λ_pose = 0.3`) | the interface is encouraged to retain goal-relevant spatial information |
+| **4** | Add the **SE(3) goal encoder** used in Stage 1 only | the action expert can be pretrained on language, state and the terminal pose, without images |
+| **5** | Train in **two stages**: spatial-goal-conditioned action pretraining (10K steps) → vision–action interface learning (30K steps) | the reported model |
+| **6** | Run **three checks** — the interface is used, the pose is reconstructed, the new parameters train and save | catches the silent failures we hit |
 
-### What the host must have
+### What the host must provide
 
-| Requirement | Why |
+| Requirement | Used for |
 | --- | --- |
-| A backbone that produces token features for the image (and, ideally, language/state) | the latents read them |
-| An action expert conditioned on those features at an identifiable **coupling point** — cross-attention KV, a joint attention mask, or feature injection into a DiT | that is the one place LIT edits |
-| Action chunks of length `H` and an end-effector pose in the dataset state (position + rotation + gripper) | the pose target is the chunk's terminal pose |
+| A pretrained backbone that yields per-layer representations for the image and for language / robot state | the latent tokens aggregate them (Step 2) |
+| An action expert conditioned on those representations at identifiable **coupling layers** through a native mechanism — cross-attention, a joint attention mask, or feature injection into a DiT | the one place LIT edits (Steps 1–2) |
+| Action chunks of horizon `H` and an end-effector pose in the dataset state | the terminal goal state `g_t = [p_{t+H}; r_{t+H}; q_{t+H}] ∈ ℝ⁸` (position, axis-angle orientation, gripper), the Stage-1 conditioning signal and the Stage-2 reconstruction target; not required at inference |
 
-### Step 1 — Find the coupling point and close it (the firewall)
+### Step 1 — Remove the direct visual conditioning
 
-Locate where visual features enter the action expert and shut that path, so that vision has **no direct route**.
-Language and robot state may keep their original path (MolmoAct2) or be routed through the interface too
-(π0.5) — the invariant is *no image tokens into the action expert*.
+Find the coupling layers and stop backbone visual representations from conditioning the action expert there.
+Language and robot state may keep their native path (MolmoAct2) or be routed through the interface as well (π0.5);
+what matters is that visual conditioning has no direct route.
 
 <table>
-<thead><tr><th width="11%">Host</th><th width="34%">Coupling point</th><th width="27%">What "closing it" means</th><th width="28%">Reference</th></tr></thead>
+<thead><tr><th width="11%">Host</th><th width="36%">Native conditioning mechanism</th><th width="25%">What changes</th><th width="28%">Reference</th></tr></thead>
 <tbody>
-<tr><td>MolmoAct2 (VLA)</td><td>Layer-wise cross-attention from the action expert to the VLM token sequence (images, instruction, state)</td><td>Mask the image tokens out of every action-expert attention</td><td><code>mask_image_from_action_expert</code> in <code>lerobot/src/lerobot/policies/molmoact2/modeling_molmoact2.py</code></td></tr>
-<tr><td>π0.5 (VLA)</td><td>One joint self-attention shared by the VLM and the action expert; the expert's rows attend the VLM's image, language and state columns</td><td>Attention mask: action-expert rows cannot attend image (and, in Stage 1, language/state) columns</td><td>mask in <code>src/pi05_goal_prior/modeling_pi05_goal_prior.py</code></td></tr>
-<tr><td>FAST-WAM (WAM)</td><td>Per-block features of the Wan2.2 video DiT injected into the ActionDiT</td><td>Drop the direct feature injection; only the interface remains</td><td><code>goal_prior_stage: stage2</code> in <code>configs/model/fastwam_goal_prior_stage2.yaml</code>, wired in <code>fastwam_joint.py</code> / <code>mot.py</code></td></tr>
-<tr><td>ImageWAM (WAM)</td><td>Per-block features of the FLUX.2 Klein DiT fed to the action head</td><td>Same: the direct path is closed</td><td><code>backbones/imagewam.py</code>, <code>configs/model/imagewam_flux2_klein_4b_goal_prior_stage2.yaml</code></td></tr>
+<tr><td>MolmoAct2 (VLA)</td><td>Layer-wise cross-attention from the action expert to the VLM token sequence (image, instruction and state tokens)</td><td>Image tokens are masked out of every action-expert attention</td><td><code>mask_image_from_action_expert</code> in <code>lerobot/src/lerobot/policies/molmoact2/modeling_molmoact2.py</code></td></tr>
+<tr><td>π0.5 (VLA)</td><td>One joint self-attention shared by the VLM and the action expert; the expert's tokens attend the VLM's image, language and state tokens</td><td>Attention mask: action-expert tokens cannot attend image tokens (nor language/state tokens, which reach it through the interface)</td><td>attention mask in <code>src/pi05_goal_prior/modeling_pi05_goal_prior.py</code></td></tr>
+<tr><td>FAST-WAM (WAM)</td><td>Per-block representations of the Wan2.2 video DiT injected into the ActionDiT</td><td>The direct injection is removed; conditioning comes only from the interface</td><td><code>goal_prior_stage: stage2</code> in <code>configs/model/fastwam_goal_prior_stage2.yaml</code>, wired in <code>fastwam_joint.py</code> / <code>mot.py</code></td></tr>
+<tr><td>ImageWAM (WAM)</td><td>Per-block representations of the FLUX.2 Klein DiT fed to the action head</td><td>Same: the direct path is removed</td><td><code>backbones/imagewam.py</code>, <code>configs/model/imagewam_flux2_klein_4b_goal_prior_stage2.yaml</code></td></tr>
 </tbody></table>
 
 ### Step 2 — Add the latent interface
 
-`N = 100` learnable tokens (`latent_dim = 768`) become the action expert's **only** visual input.
-
-- **Reading side.** The latents attend to the backbone's visual *and* semantic features. Two ways that both
-  worked: append them to the backbone sequence so the backbone contextualises them layer by layer (MolmoAct2,
-  π0.5), or run a small aggregator — self-attention over the latents, then cross-attention to language/state, then
-  to image features — per backbone layer group (FAST-WAM, ImageWAM: `inner_dim = 512`, 8 heads, 6 layer groups).
-- **Writing side.** Hand the latents to the action expert at exactly the point closed in Step 1 — as the KV of its
-  cross-attention, as the only columns its rows may attend, or as the injected features — layer-wise if the host
-  conditions layer-wise.
+`K = 100` learnable latent tokens `Z₀` (dimension `d = 768`), shared across inputs. At each coupling layer `ℓ` the
+tokens are updated by **self-attention, semantic cross-attention and visual cross-attention** — the latent tokens
+are the queries, the backbone's language/state and visual representations at that layer are the keys and values —
+and the updated tokens condition the corresponding action-expert layer through the architecture's native
+mechanism (as the keys/values of its cross-attention, as the only tokens its rows may attend, or as the injected
+features). For parameter efficiency, every `m` consecutive coupling layers share the interface attention parameters
+(`inner_dim = 512`, 8 heads, 6 parameter groups in our runs).
 
 Reference: `semantic_visual_recurrent` (MolmoAct2); `goal_prior.py` (Pi05, fastwam); `goal_pose_prior.py` (ImageWAM).
 
-### Step 3 — Supervise 8 of the latents with the chunk's terminal pose
+### Step 3 — Add the pose-reconstruction objective
 
-Reserve `num_pose_tokens = 8` latents. A 3-layer MLP (`GoalPoseDecoder`, `inner_dim = 512`) decodes them to the
-**end-effector pose at the end of the current action chunk**: position (3) + axis-angle rotation (3) + gripper,
-read from the dataset's state at `t + H` (`H = 10` in our runs) and quantile-normalised to `[-1, 1]` with the
-dataset statistics. Loss: MSE, weight `λ = 0.3`, added to the host's native action loss.
+An MLP decoder reconstructs the terminal goal state `g_t` from the final latent tokens:
+`L_pose = ‖ĝ_t − g_t‖²`, computed in the preprocessed (quantile-normalised) state space and averaged over valid
+targets, and `L_stage2 = L_act + λ_pose · L_pose` with `λ_pose = 0.3`. `g_t` is the same target that conditioned
+Stage 1, read from the dataset's state at `t + H` (`H = 10` in our runs). The decoder is training-time only.
 
 Reference: `GoalPoseDecoder` in every fork; the target is built in the data processor
 (`target_pose_delta_index` in MolmoAct2's `processor_molmoact2.py`).
 
-### Step 4 — Add the Stage-1 SE(3) encoder (training-time only)
+### Step 4 — Add the SE(3) goal encoder (Stage 1 only)
 
-A 3-layer MLP that turns the same normalised pose into a few conditioning tokens for the action expert
-(`SE3Encoder` / `GoalPoseEncoder`). It exists only so the action expert can be pretrained **without images**; it
-is deleted after Stage 1 and never used at inference — the latents predict the pose from vision instead.
+A trainable three-layer MLP with GELU activations maps `g_t` to goal tokens, which are concatenated with the
+backbone's language/state representations at each coupling layer and condition the action expert through the
+native mechanism. It is omitted after Stage 1 and never used at inference — in Stage 2 the latent tokens carry
+the spatial information instead.
+
+Reference: `SE3Encoder` / `GoalPoseEncoder` in every fork.
 
 ### Step 5 — Train in two stages
 
 ```text
-Stage 1   backbone frozen · no images · action expert from scratch (or re-initialised)
-          condition on  language + state + SE(3)-encoded terminal pose  →  native action loss      (10K steps)
-Stage 2   init the action expert from Stage 1 · drop the SE(3) encoder · enable latents + pose decoder
-          fine-tune everything:  L = L_action + 0.3 · L_pose                                          (30K steps)
+Stage 1  Spatial-goal-conditioned action pretraining                                            (10K steps)
+         backbone frozen · no images · action expert trained from scratch
+         conditioned on language + robot state + SE(3)-encoded terminal pose  →  native action loss (L_prior)
+Stage 2  Vision–action interface learning                                                       (30K steps)
+         action expert initialised from Stage 1 · goal encoder omitted · latent interface + pose decoder added
+         full fine-tuning of backbone, action expert, latent tokens, interface attention and decoder:
+         L_stage2 = L_act + 0.3 · L_pose
 ```
 
-Learning rates that mattered: the new modules (latents, aggregator) and the action expert at `1e-4` with a `5K`-step
-warm-up; the backbone at `1e-5`. Interface settings were **not** tuned per architecture:
-`num_latents = 100`, `num_pose_tokens = 8`, `latent_dim = 768`, `inner_dim = 512`, `lambda_pose = 0.3`.
-Nothing else in the host's training recipe changes.
+Learning rates that mattered: the interface modules and the action expert at `1e-4` with a `5K`-step warm-up; the
+backbone at `1e-5`. Interface settings were **not** tuned per architecture: `K = 100`, `d = 768`,
+`inner_dim = 512`, `λ_pose = 0.3`. At inference the latent interface stays active while the Stage-1 goal encoder
+and the Stage-2 decoder are omitted; the policy needs only images, language and robot state and follows the
+host's native action sampling.
 
 ### Step 6 — Three checks before trusting a run
 
 Each caught a silent failure for us at least once:
 
-- **Is the interface used at all?** Measure the action expert's attention mass on the latent tokens vs. everything
-  else (`tools/probe_latent_attention.py` in Pi05, `scripts/audit_goal_prior_v2.py` in ImageWAM). Near zero means
-  the firewall leaks or a gate never opened.
-- **Do the latents carry the pose?** Normalised pose loss should reach ~`1e-3` on training data; decode it and draw it
-  back onto the frame (`scripts/render_pose_videos.sh`) — the predicted marker should lead the gripper, not trail it.
-- **New parameters actually train and save.** Under bf16 autocast, small gates and freshly added modules can freeze
+- **Is the interface actually the conditioning pathway?** Measure the action expert's attention mass on the latent
+  tokens versus everything else (`tools/probe_latent_attention.py` in Pi05, `scripts/audit_goal_prior_v2.py` in
+  ImageWAM). Near zero means the direct visual path is still open, or a gate never opened.
+- **Do the latent tokens reconstruct the pose?** The normalised pose loss should reach ~`1e-3` on training data;
+  decode it and draw it back onto the frame (`scripts/render_pose_videos.sh`) — the reconstructed goal should lead
+  the gripper, not trail it.
+- **Do the new parameters train and save?** Under bf16 autocast, small gates and freshly added modules can freeze
   or be dropped from the checkpoint; check the parameter count in `train_config.json` and that the new keys load.
 
 ## Worked example: MolmoAct2, train then evaluate
@@ -164,7 +171,7 @@ bash scripts/preflight.sh                                # submodule commit, LIB
 ```bash
 cd "$LIT_MOLMOACT2"
 bash scripts/libero_goal_prior_v3/train_stage1.sh           # Stage 1: no images, 10K steps, batch 128/GPU
-bash scripts/libero_goal_prior_v3/train_stage2.sh           # Stage 2: 100 latents (8 pose-supervised), 30K steps, from Stage 1
+bash scripts/libero_goal_prior_v3/train_stage2.sh           # Stage 2: latent interface + pose reconstruction, 30K steps, from Stage 1
 OPTIMIZER_ACTION_EXPERT_LR=1e-4 SCHEDULER_ACTION_EXPERT_WARMUP_STEPS=5000 \
   bash scripts/libero_goal_prior/train_baseline.sh          # (optional) matched baseline, 30K steps, batch 32/GPU
 ```
